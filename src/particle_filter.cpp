@@ -87,7 +87,28 @@ void ParticleFilter::dataAssociation(std::vector<LandmarkObs> predicted, std::ve
 	//   observed measurement to this particular landmark.
 	// NOTE: this method will NOT be called by the grading code. But you will probably find it useful to 
 	//   implement this method and use it as a helper during the updateWeights phase.
-
+    for (int i=0; i<observations.size(); ++i) {
+        
+        double dist_min = 0.0;
+        int id_m = 0;
+        
+        for (int j=0; j<predicted.size(); ++j) {
+            
+            double dist_temp = dist(observations[i].x, observations[i].y, predicted[j].x, predicted[j].y);
+            
+            if (j == 0) {
+                dist_min = dist_temp;
+                id_m = predicted[j].id;
+            }
+            
+            if (dist_temp < dist_min) {
+                dist_min = dist_temp;
+                id_m = predicted[j].id;
+            }
+        }
+        
+        observations[i].id = id_m;
+    }
 }
 
 void ParticleFilter::updateWeights(double sensor_range, double std_landmark[], 
@@ -102,21 +123,72 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 	//   and the following is a good resource for the actual equation to implement (look at equation 
 	//   3.33
 	//   http://planning.cs.uiuc.edu/node99.html
+    
+    double weights_sum = 0.0;
+    
+    for (int i = 0; i < particles.size(); i++) {
+        Particle &p = particles[i];
+        
+        // Make a list of predicted measurements for this particle
+        std::vector<LandmarkObs> predicted(map_landmarks.landmark_list.size());
+        for (int j = 0; j < predicted.size(); j++) {
+            Map::single_landmark_s landmark = map_landmarks.landmark_list[j];
+            
+            double sin_theta = sin(p.theta);
+            double cos_theta = cos(p.theta);
+            
+            double x_pred = (landmark.y_f- p.y)*sin_theta + (landmark.x_f - p.x) * cos_theta;
+            double y_pred = (landmark.y_f- p.y)*cos_theta - (landmark.x_f - p.x) * sin_theta;
+            
+            predicted[j].x = x_pred;
+            predicted[j].y = y_pred;
+            predicted[j].id = landmark.id_i;
+        }
+        
+        dataAssociation(predicted, observations);
+        
+        double prob = 1;
+        
+        for (LandmarkObs &obs : observations) {
+            
+            double obs_x = obs.x * cos(p.theta) - obs.y * sin(p.theta) + p.x;
+            double obs_y = obs.x * sin(p.theta) + obs.y * cos(p.theta) + p.y;
+            
+            double true_x = map_landmarks.landmark_list[obs.id-1].x_f;
+            double true_y = map_landmarks.landmark_list[obs.id-1].y_f;
+            
+            double obs_prob = (1/(2*M_PI*std_landmark[0]*std_landmark[1]))
+            * exp(-(pow(true_x - obs_x, 2)/(2*std_landmark[0]*std_landmark[0])
+                    + (pow(true_y - obs_y, 2)/(2*std_landmark[1]*std_landmark[1]))));
+            
+            prob *= obs_prob;
+        }
+        
+        weights[i] = prob;
+    }
+    
+    // normalize weights
+    for (int i=0; i<num_particles; i++)
+        particles[i].weight /= weights_sum;
 }
 
 void ParticleFilter::resample() {
 	// TODO: Resample particles with replacement with probability proportional to their weight. 
 	// NOTE: You may find std::discrete_distribution helpful here.
 	//   http://en.cppreference.com/w/cpp/numeric/random/discrete_distribution
-	default_random_engine gen;
-	discrete_distribution<int> distribution(weights.begin(), weights.end());
-	vector<Particle> resample_particles;
-	for(int i=0; i < num_particles; ++i)
-	{
-		resample_particles.push_back(particles[distribution[gen]]);
-	}
-
-	particles = resample_particles;
+    
+    std::default_random_engine generator;
+    std::discrete_distribution<int> dist(weights.begin(), weights.end());
+    
+    std::vector<Particle> new_particles;
+    new_particles.reserve(particles.size());
+    
+    for (int i = 0; i < particles.size(); i++) {
+        int sampled_index = dist(generator);
+        new_particles.push_back(particles[sampled_index]);
+    }
+    
+    particles = new_particles;
 }
 
 Particle ParticleFilter::SetAssociations(Particle particle, std::vector<int> associations, std::vector<double> sense_x, std::vector<double> sense_y)
